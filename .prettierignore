@@ -1,0 +1,46 @@
+**/.{git,svn,hg}/**
+**/node_modules/**
+**/build/**
+**/dist/**
+**/coverage/**
+**/.yarn/**
+**/.vscode/pnpify/**
+**/deployment/**/templates/**
+
+.prettierignore
+.editorconfig
+.eslintignore
+.gitattributes
+.gitignore
+.DS_Store
+.dockerignore
+Dockerfile*
+.helmignore
+*.ico
+*.png
+*.txt
+*.svg
+*.lock
+*.zip
+*.sh
+*.pem
+*.crt
+*.key
+*.req
+*.log
+*.tpl
+*.tgz
+*.pdf
+*.csv
+*.xlsx
+
+/.pnp.*
+
+.env*
+
+# mongodump
+*.bson
+# solidity
+*.sol
+# zokrates
+*.zok

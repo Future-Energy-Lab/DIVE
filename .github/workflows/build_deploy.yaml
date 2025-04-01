@@ -1,0 +1,76 @@
+name: Build and deploy dive app
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    name: Deploy to EC2
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Set up AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.DEV_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.DEV_AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-west-2
+
+      - name: Log in to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Build & push dive image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          echo "Building and pushing dive image..."
+          docker build -t $ECR_REGISTRY/dive:${{ github.sha }} .
+          docker push $ECR_REGISTRY/dive:${{ github.sha }}
+
+      - name: Deploy to EC2
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            ECR_REGISTRY="${{ steps.login-ecr.outputs.registry }}"
+
+            # Stop any existing container running on port 8000
+            running_container=$(sudo docker ps -q --filter "publish=8000")
+            if [ -n "$running_container" ]; then
+              echo "Stopping existing container..."
+              sudo docker stop $running_container
+            else
+              echo "No container running on port 8000"
+            fi
+
+            # SSH tunnel setup
+            ssh -i ~/.ssh/id_ed25519 -o ServerAliveInterval=60 -o ExitOnForwardFailure=yes -o GatewayPorts=true -nNT -L 5672:127.0.0.1:5672 -L 15672:127.0.0.1:15672 -p 2222 tunneluser@80.158.90.144 &
+
+            # Log in to ECR
+            aws ecr get-login-password --region us-west-2 | sudo docker login --username AWS --password-stdin 124847487737.dkr.ecr.us-west-2.amazonaws.com
+
+            # Pull the latest image
+            sudo docker pull $ECR_REGISTRY/dive:${{ github.sha }}
+
+            # Run the new container with restart policy
+            echo "Running new container..."
+            sudo docker run -d --restart unless-stopped -p 8000:8000 \
+              -e DATABASE_URL='${{ secrets.DATABASE_URL }}' \
+              -e RABBITMQ_URL='${{ secrets.RABBITMQ_URL }}' \
+              -e DOMAIN='gp-dive-dev.energyweb.org' \
+              -e KILT_WSS_ADDRESS='wss://spiritnet.kilt.io' \
+              -e SQS_REGION='us-west-2' \
+              -e SQS_ENDPOINT='https://sqs.us-west-2.amazonaws.com' \
+              -e SQS_URL='https://sqs.us-west-2.amazonaws.com/098061033856/gpdive.fifo' \
+              -e SQS_ACCESS_KEY_ID='${{ secrets.SQS_ACCESS_KEY_ID }}' \
+              -e SQS_SECRET_ACCESS_KEY='${{ secrets.SQS_SECRET_ACCESS_KEY }}' \
+              --add-host host.docker.internal:host-gateway \
+              $ECR_REGISTRY/dive:${{ github.sha }}
